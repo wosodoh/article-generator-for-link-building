@@ -60,16 +60,16 @@ const LIMITS_PLUS = Object.assign({}, FREE_LIMITS, { 'gemini-3.9-flash': { rpm: 
     check(s.fallbacks === 'gemini-3.5-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-2.5-flash-lite', 'резервные: ' + s.fallbacks);
     check(+s.parallel === 1, 'одновременно: ' + s.parallel);
     check(+s.rpm === 5, 'запросов в минуту: ' + s.rpm);
-    check(+s.minWords === 400 && +s.maxWords === 550, 'объём: ' + s.minWords + '–' + s.maxWords);
+    check(+s.minChars === 4500 && +s.maxChars === 6500, 'объём: ' + s.minChars + '–' + s.maxChars);
   });
 
   await test('Старые настройки: алиас gemini-flash-latest и старые резервные заменяются, свои значения сохраняются', async check => {
     const app = await loadApp({ data: data({ model: 'gemini-flash-latest',
-      fallbacks: 'gemini-3.5-flash, gemini-3.1-flash-lite, gemini-flash-lite-latest', minWords: 420, maxWords: 560 }, 0) });
+      fallbacks: 'gemini-3.5-flash, gemini-3.1-flash-lite, gemini-flash-lite-latest', minChars: 4200, maxChars: 6000 }, 0) });
     const s = app.eval('S.settings');
     check(s.model === 'gemini-3.8-flash', 'модель: ' + s.model);
     check(s.fallbacks === 'gemini-3.5-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-2.5-flash-lite', 'резервные: ' + s.fallbacks);
-    check(+s.minWords === 420 && +s.maxWords === 560, 'объём пользователя изменился: ' + s.minWords + '–' + s.maxWords);
+    check(+s.minChars === 4200 && +s.maxChars === 6000, 'объём пользователя изменился: ' + s.minChars + '–' + s.maxChars);
     const app2 = await loadApp({ data: data({ model: 'gemini-3.5-flash', fallbacks: 'gemini-2.5-flash-lite, gemini-flash-lite-latest' }, 0) });
     const s2 = app2.eval('S.settings');
     check(s2.model === 'gemini-3.5-flash', 'своя модель изменилась: ' + s2.model);
@@ -276,7 +276,7 @@ const LIMITS_PLUS = Object.assign({}, FREE_LIMITS, { 'gemini-3.9-flash': { rpm: 
   const C = require('../src/core');
   const fixture = name => fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
   const nlCtx = (brand, anchor) => ({ acceptor: 'https://betano-nl.com/', anchor, brand, cross: false, lang: 'nl',
-    minWords: 400, maxWords: 550, stop: C.DEFAULT_STOP, usedH1: [] });
+    minChars: 4500, maxChars: 6500, stop: C.DEFAULT_STOP, usedH1: [] });
   const checkArticle = (html, ctx) => C.validateArticle(C.autoFix(C.sanitizeHtml(html, ctx.acceptor), ctx), ctx);
 
   await test('Бренд из домена: гео-хвост отрезается, подсказка из анкора работает', async check => {
@@ -316,38 +316,66 @@ const LIMITS_PLUS = Object.assign({}, FREE_LIMITS, { 'gemini-3.9-flash': { rpm: 
     check(html === '<p>De marge is 5%.</p>', 'autoFix: ' + html);
   });
 
-  await test('Ваша хорошая статья проходит проверку; ссылка в 1-м и 3-м абзаце тоже, в 4-м — нет', async check => {
-    const ctx = nlCtx('Betano', 'https://betano-nl.com/');
-    const good = fixture('good-nl.html');
-    const v = checkArticle(good, ctx);
-    check(!v.errors.length, 'ошибки: ' + v.errors.join(' | '));
-    const link = '<a href="https://betano-nl.com/">https://betano-nl.com/</a>';
-    const noLink = good.replace(link, 'deze site');
-    const s1 = noLink.split('<h2>')[1];
-    const ps = s1.match(/<p>[\s\S]*?<\/p>/g);
-    const withLinkIn = i => {
-      const p = ps[i].replace('</p>', ' Meer uitleg op ' + link + '.</p>');
-      return noLink.replace(ps[i], p);
-    };
-    [0, 2].forEach(i => {
-      const r = checkArticle(withLinkIn(i), ctx);
-      check(!r.errors.length, 'ссылка в ' + (i + 1) + '-м абзаце: ' + r.errors.join(' | '));
+  // ── 1.2.0: структура по промпту команды ──
+  const teamCtx = (brand, anchor, lang) => ({ acceptor: 'https://qbet-s.org/', anchor, brand, cross: true, lang,
+    minChars: 4500, maxChars: 6500, stop: C.DEFAULT_STOP, usedH1: [] });
+
+  await test('Три эталонные статьи команды проходят проверку без серьёзных ошибок', async check => {
+    [['team-de-cross-nl-1.html', 'qbet-s.org', 'qbet casino', 'de'], ['team-de-cross-nl-2.html', 'QBet', 'QBet Casino', 'de'],
+      ['team-en-cross-nl-3.html', 'Qbet', 'Casino QBet', 'en']].forEach(([f, brand, anchor, lang]) => {
+      const v = checkArticle(fixture(f), teamCtx(brand, anchor, lang));
+      check(!v.errors.length, f + ': ' + v.errors.join(' | '));
+      check(!v.soft.some(e => /бренд/.test(e)), f + ' замечания по бренду: ' + v.soft.filter(e => /бренд/.test(e)).join(' | '));
     });
-    const fourth = noLink.replace(ps[2], ps[2] + '<p>Extra alinea met ' + link + '.</p>');
-    const r4 = checkArticle(fourth, ctx);
-    check(r4.errors.some(e => /1-м, 2-м или 3-м абзаце/.test(e)), 'ссылка в 4-м абзаце прошла: ' + r4.errors.join(' | '));
   });
 
-  await test('Промпт: все подстановки заполнены, есть правила про <h2>, таблицу, бренд и ~110 слов на раздел', async check => {
+  await test('Ссылка: в 1-м разделе — серьёзная ошибка, в 3-м — мелочь, во 2-м — норма', async check => {
+    const ctx = teamCtx('Qbet', 'Casino QBet', 'en');
+    const art = fixture('team-en-cross-nl-3.html');
+    const link = '<a title="Casino QBet" href="https://qbet-s.org/" target="_blank" rel="noopener noreferrer">Casino QBet</a>';
+    const noLink = art.replace(link, 'this platform');
+    const secs = noLink.split(/(?=<h2>)/);
+    const put = i => { const s = secs.slice(); s[i] = s[i].replace('</p>', ' A gaming platform such as ' + link + ' illustrates this.</p>'); return s.join(''); };
+    const v1 = checkArticle(put(1), ctx);
+    check(v1.errors.some(e => /не должна стоять в первом разделе/.test(e)), 'ссылка в 1-м разделе прошла: ' + v1.errors.join(' | '));
+    const v3 = checkArticle(put(3), Object.assign({}, ctx, { cross: false }));
+    check(!v3.errors.length && v3.soft.some(e => /во 2-м разделе, сейчас в №3/.test(e)), 'ссылка в 3-м: ' + v3.errors.concat(v3.soft).join(' | '));
+  });
+
+  await test('Бренд: QBet = Qbet, «spin» ≠ Spin, форма «бренд + casino», бренд во 2-м разделе — мелочь', async check => {
+    check(C.countBrand('QBet and Qbet and QBET', 'Qbet') === 3, 'регистр внутри бренда');
+    check(C.countBrand('one spin, then Spin', 'Spin') === 1, 'короткий бренд ловит обычное слово');
+    check(C.hasBrandCasino('analyses of QBet Casino show', 'Qbet') && C.hasBrandCasino('het kasino Betano', 'Betano'), 'форма бренд + casino не найдена');
+    const ctx = teamCtx('QBet', 'QBet Casino', 'de');
+    const art = fixture('team-de-cross-nl-2.html');
+    const v = checkArticle(art.replace('Psychologische Untersuchungen zeigen', 'Psychologische Untersuchungen rund um QBet zeigen'), ctx);
+    check(v.soft.some(e => /Во 2-м разделе \(со ссылкой\) бренда быть не должно/.test(e)), 'бренд во 2-м разделе не замечен: ' + v.soft.join(' | '));
+    const noCasino = art.replace(/QBet Casino<\/strong>/g, 'QBet</strong>');
+    check(checkArticle(noCasino, ctx).soft.some(e => /форма «QBet casino»/.test(e)), 'нет мелочи про форму бренд + casino');
+  });
+
+  await test('Заголовок с «Как/How», элементы в одном разделе, объём — проверяются', async check => {
+    const ctx = teamCtx('Qbet', 'Casino QBet', 'en');
+    const art = fixture('team-en-cross-nl-3.html');
+    const how = art.replace('<h1>Cooldown Mechanics', '<h1>How Cooldown Mechanics');
+    check(checkArticle(how, ctx).soft.some(e => /не должен начинаться с «Как»/.test(e)), 'заголовок с How не замечен');
+    const sameSec = art.replace('<ol>', '<ul><li>x</li></ul><ol>').replace(/<ul>\s*<li>Average session duration[\s\S]*?<\/ul>/, '');
+    check(checkArticle(sameSec, ctx).soft.some(e => /в разных разделах/.test(e)), 'ul и ol в одном разделе не замечены');
+    const short = art.split(/(?=<h2>)/).slice(0, 4).join('') + '<h2>Ending</h2><p>Short.</p><h2>More</h2><p>Short.</p><h2>Last</h2><p>Short.</p>';
+    check(checkArticle(short, ctx).errors.some(e => /Объём \d+ знаков/.test(e)), 'короткая статья не поймана');
+  });
+
+  await test('Промпт: 7 разделов, бренд 6 раз, ссылка во 2-м разделе, объём в знаках, все подстановки заполнены', async check => {
     const app = await loadApp({ data: data({}, 1) });
     await generate(app);
     const sys = app.mock.log[0].body.systemInstruction.parts[0].text;
     check(!/\{(MIN|MAX|SEC|STOP)\}/.test(sys), 'остались подстановки: ' + (sys.match(/\{[A-Z]+\}/g) || []).join(','));
-    check(/около 110 слов на раздел/.test(sys), 'нет «около 110 слов на раздел»');
-    check(/КОРОТКИЙ подзаголовок из 3–8 слов/.test(sys), 'нет правила про короткие <h2>');
-    check(/ЗАПРЕЩЕНЫ таблицы «средних значений по рынку»/.test(sys), 'нет правила про таблицу');
-    check(/НЕ приписывай бренду функции/.test(sys), 'нет правила про бренд');
-    check((sys.match(/550/g) || []).length >= 3, 'максимум 550 подставлен не везде');
+    check(/РОВНО 7 разделов <h2>/.test(sys), 'нет 7 разделов');
+    check(/от 4500 до 6500 знаков с пробелами, около 750 знаков на раздел/.test(sys), 'нет объёма в знаках');
+    check(/ровно 6 упоминаний: по одному в разделах №1, №3, №4, №5, №6, №7\. Во 2-м разделе бренда НЕТ/.test(sys), 'нет правила бренда');
+    check(/SEO-ССЫЛКА — ровно одна, во 2-м разделе/.test(sys), 'нет правила ссылки');
+    check(/Не начинается со слова «Как»/.test(sys), 'нет правила про «Как»');
+    check(tasksOf(app)[0].status === 'ok' && !(tasksOf(app)[0].soft || []).length, 'мок-статья: ' + (tasksOf(app)[0].soft || []).join(' | '));
   });
 
   // ── 1.1.6: вариант Б — специалист из страны акцептора ──
@@ -366,15 +394,13 @@ const LIMITS_PLUS = Object.assign({}, FREE_LIMITS, { 'gemini-3.9-flash': { rpm: 
 
   await test('Ваша статья en → de: цитата, начинающаяся с анкора, — серьёзная ошибка', async check => {
     const ctx = { acceptor: 'https://betanoswitzerland.net/', anchor: 'betano live wetten', brand: 'Betano', cross: true, lang: 'en',
-      minWords: 400, maxWords: 550, stop: C.DEFAULT_STOP, usedH1: [] };
+      minChars: 4500, maxChars: 6500, stop: C.DEFAULT_STOP, usedH1: [] };
     const v = checkArticle(fixture('bad-cross-en-de.html'), ctx);
     check(v.errors.some(e => /Цитата начинается с анкора/.test(e)), 'нет ошибки: ' + v.errors.join(' | '));
     const fixed = fixture('bad-cross-en-de.html').replace('<blockquote><a href="https://betanoswitzerland.net/">betano live wetten</a> erfreut sich großer Beliebtheit, wobei',
       '<blockquote>„Bei Anbietern wie <a href="https://betanoswitzerland.net/">betano live wetten</a> sehen wir, dass');
     const v2 = checkArticle(fixed, ctx);
     check(!v2.errors.some(e => /Цитата/.test(e)), 'ссылка в середине цитаты считается ошибкой: ' + v2.errors.join(' | '));
-    const long = fixed.replace('</blockquote>', ' Das ist wichtig. Und noch ein Satz hier.</blockquote>');
-    check(checkArticle(long, ctx).soft.some(e => /длиннее 2 предложений/.test(e)), 'длинная цитата не замечена');
   });
 
   await test('Промпт варианта Б: страна, инициалы специалиста и правило «не начинать цитату с анкора»', async check => {
@@ -386,7 +412,7 @@ const LIMITS_PLUS = Object.assign({}, FREE_LIMITS, { 'gemini-3.9-flash': { rpm: 
     check(/Страна акцептора: Швейцария/.test(user(0)), 'нет страны: ' + user(0));
     check(/имя на букву [A-Z], фамилия на букву [A-Z]\)\. Пиши имя и фамилию полностью, не инициалами/.test(user(0)), 'нет указания на полное имя: ' + user(0));
     check(!/Страна акцептора/.test(user(1)), 'страна попала в вариант А');
-    check(/НИКОГДА не начинай цитату с анкора/.test(sys) && /вымышленные имя и фамилия полностью/.test(sys), 'нет правил варианта Б');
+    check(/НИКОГДА не начинай цитату с анкора/.test(sys) && /имя и фамилия вымышленные, полные/.test(sys), 'нет правил варианта Б');
     check(tasksOf(app).every(t => t.status === 'ok'), 'статусы: ' + tasksOf(app).map(t => t.status + ' ' + (t.errors || []).join('')).join(' | '));
   });
 
@@ -413,25 +439,7 @@ const LIMITS_PLUS = Object.assign({}, FREE_LIMITS, { 'gemini-3.9-flash': { rpm: 
     check(/Статья НИКОГДА не пишется на русском/.test(sys), 'нет правила «не на русском»');
     ['на платформах вроде', 'Короткий подзаголовок', 'Конкретный заголовок', 'БРЕНД казино', 'как отмечают аналитики', 'точный перевод цитаты']
       .forEach(p => check(sys.indexOf(p) < 0, 'в промпте осталось «' + p + '»'));
-    check(/Цитату НЕ переводи/.test(sys), 'нет правила «без перевода»');
-  });
-
-  // ── 1.1.8: перед цитатой — вступление ──
-  await test('Вариант Б: статья не начинается со специалиста — перед цитатой вступительный абзац', async check => {
-    const ctx = { acceptor: 'https://betano-nl.com/', anchor: 'Betano Casino Nederland', brand: 'Betano', cross: true, lang: 'en',
-      minWords: 400, maxWords: 550, stop: C.DEFAULT_STOP, usedH1: [] };
-    const v = checkArticle(fixture('cross-short-intro-en-nl.html'), ctx);
-    check(v.soft.some(e => /вступительный абзац/.test(e)), 'короткая подводка не замечена: ' + v.soft.join(' | '));
-    check(!v.errors.length, 'ошибки: ' + v.errors.join(' | '));
-    const intro = 'Slot sessions rarely end the way players expect, because short-term results swing far away from the long-term average. ' +
-      'Knowing how return and volatility work together makes those swings easier to read. ';
-    const longer = fixture('cross-short-intro-en-nl.html').replace('<p>Market analyst', '<p>' + intro + 'Market analyst');
-    check(!checkArticle(longer, ctx).soft.some(e => /вступительный абзац/.test(e)), 'нормальное вступление считается коротким');
-    const app = await loadApp({ data: data({}, 1, () => ({ langDonor: 'en', langLink: 'nl' })) });
-    await generate(app);
-    const sys = app.mock.log[0].body.systemInstruction.parts[0].text;
-    check(/Не начинай статью со специалиста/.test(sys) && /сначала обычное вступление по теме раздела/.test(sys), 'нет правила о вступлении');
-    check(tasksOf(app)[0].status === 'ok' && !(tasksOf(app)[0].soft || []).length, 'мок-статья: ' + (tasksOf(app)[0].soft || []).join(' | '));
+    check(/Цитату не переводи/.test(sys), 'нет правила «без перевода»');
   });
 
   print('\n' + (failed ? 'Не прошло: ' + failed : 'Все проверки прошли'));

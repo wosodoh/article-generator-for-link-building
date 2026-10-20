@@ -12,7 +12,7 @@ const host = u => C.hostOf(u).replace(/^www\./, '');
 const DEFAULT_SETTINGS = {
   apiKey: '', model: 'gemini-3.8-flash',
   fallbacks: 'gemini-3.5-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-2.5-flash-lite',
-  parallel: 1, rpm: 5, maxAttempts: 2, strict: false, minWords: 400, maxWords: 550, mode: 'igaming', temperature: 0.9,
+  parallel: 1, rpm: 5, maxAttempts: 2, strict: false, minChars: 4500, maxChars: 6500, mode: 'igaming', temperature: 0.9,
 };
 // Резервные модели по умолчанию в версиях до 1.1.2 — заменяем на новые при загрузке
 const OLD_DEFAULT_FALLBACKS = 'gemini-3.5-flash, gemini-3.1-flash-lite, gemini-flash-lite-latest';
@@ -369,7 +369,7 @@ function runSettings() {
     rpm: Math.min(60, Math.max(1, +st.rpm || 5)),
     maxAttempts: Math.min(4, Math.max(1, +st.maxAttempts || 2)),
     strict: !!st.strict, bridge: st.mode === 'bridge',
-    minWords: +st.minWords || 400, maxWords: +st.maxWords || 550,
+    minChars: +st.minChars || 4500, maxChars: +st.maxChars || 6500,
     temperature: isNaN(+st.temperature) ? 0.9 : +st.temperature,
   };
 }
@@ -450,7 +450,7 @@ async function processTask(t, s, system) {
       usedH1: usedH1For(t), examples: pick(S.topics, 6), direction: pick(C.DIRECTIONS, 1)[0],
       country: C.acceptorCountry(t.acceptor, t.langLink), initials: C.expertInitials() };
     const ctx = { acceptor: task.acceptor, anchor: task.anchor, brand: task.brand, cross: task.cross, lang: task.langDonor,
-      minWords: s.minWords, maxWords: s.maxWords, stop: S.stop, usedH1: task.usedH1 };
+      minChars: s.minChars, maxChars: s.maxChars, stop: S.stop, usedH1: task.usedH1 };
     const contents = [{ role: 'user', parts: [{ text: C.userPrompt(task) }] }];
     let best = null, attempts = 0, retries = 0, lastErr = 0;
 
@@ -502,7 +502,7 @@ async function processTask(t, s, system) {
     if (!best) { t.status = 'new'; t.step = ''; return 'stopped'; }
     const ok = best.v.errors.length === 0 && (!s.strict || best.v.soft.length === 0);
     Object.assign(t, {
-      html: best.html, h1: best.v.h1, words: best.v.words, errors: best.v.errors, soft: best.v.soft,
+      html: best.html, h1: best.v.h1, words: best.v.words, chars: best.v.chars, errors: best.v.errors, soft: best.v.soft,
       attempts, seconds: Math.round((Date.now() - t0) / 1000), model: s.model, done: Date.now(),
       status: ok ? 'ok' : 'check', step: '',
     });
@@ -544,9 +544,9 @@ async function generate(ids) {
   const skipped = list.length - ready.length;
   if (!ready.length) { toast(skipped ? 'Сначала выберите язык/бренд в подсвеченных строках' : 'Нет новых задач'); renderTasks(); return; }
 
-  // слов на раздел: середина диапазона минус заголовки, делённая на 4 раздела (400–550 → 110)
-  const perSection = Math.max(50, Math.round(((s.minWords + s.maxWords) / 2 - 30) / 4 / 5) * 5);
-  const system = C.systemPrompt().replace(/\{MIN\}/g, s.minWords).replace(/\{MAX\}/g, s.maxWords).replace(/\{SEC\}/g, perSection)
+  // знаков на раздел: середина диапазона минус заголовки, делённая на 7 разделов (4500–6500 → 750)
+  const perSection = Math.max(300, Math.round(((s.minChars + s.maxChars) / 2 - 300) / 7 / 50) * 50);
+  const system = C.systemPrompt().replace(/\{MIN\}/g, s.minChars).replace(/\{MAX\}/g, s.maxChars).replace(/\{SEC\}/g, perSection)
     .replace('{STOP}', S.stop.map(x => '«' + x + '»').join(', '));
   run = { s, total: ready.length, done: 0, ok: 0, check: 0, err: 0, start: Date.now(), stop: false, fatal: '', inFlight: 0, maxActive: s.parallel, pauseUntil: 0, okStreak: 0,
     nextAt: 0, interval: Math.round(60000 / s.rpm) };
@@ -579,6 +579,9 @@ async function generate(ids) {
 }
 
 // ───────────────────────────── Статьи ─────────────────────────────
+
+/** Объём статьи: в знаках (с 1.2.0), у старых статей — в словах */
+function volume(t) { return t.chars ? t.chars + ' знаков' : (t.words || 0) + ' слов'; }
 
 function groupsOfArticles(includePlaced) {
   const groups = [], byKey = {};
@@ -616,7 +619,7 @@ function renderArticles() {
           '<button class="btn small primary" data-act="copy">Копировать HTML</button>' +
         '</div>' +
         '<div class="m">Донор: <b>' + esc(host(t.donor)) + '</b> · Анкор: <b>' + esc(t.anchor) + '</b> · ' + esc(t.langDonor) + (t.langDonor !== t.langLink ? ' → ' + esc(t.langLink) + ' (цитата)' : '') +
-          ' · ' + (t.words || 0) + ' слов' + (t.seconds ? ' · ' + t.seconds + ' сек' : '') + '</div>' +
+          ' · ' + volume(t) + (t.seconds ? ' · ' + t.seconds + ' сек' : '') + '</div>' +
         (notes.length ? '<div class="n">' + esc(notes.join(' · ')) + '</div>' : '') +
       '</div>';
     }).join('') + '</div>').join('');
@@ -654,7 +657,7 @@ function openPreview(t) {
   $('#modalTitle').textContent = host(t.donor) + ' → ' + host(t.acceptor);
   const notes = (t.errors || []).concat(t.soft || []);
   $('#modalMeta').innerHTML = 'Анкор: <b>' + esc(t.anchor) + '</b> · Бренд: <b>' + esc(t.brand) + '</b> · ' + esc(t.langDonor) + ' → ' + esc(t.langLink) +
-    ' · ' + (t.words || 0) + ' слов · ' + esc(STATUS_LABEL[t.status]) + (notes.length ? '<br><span style="color:var(--warn)">' + esc(notes.join(' · ')) + '</span>' : '');
+    ' · ' + volume(t) + ' · ' + esc(STATUS_LABEL[t.status]) + (notes.length ? '<br><span style="color:var(--warn)">' + esc(notes.join(' · ')) + '</span>' : '');
   $('#modalBody').innerHTML = t.html;
   $('#modal').hidden = false;
 }
@@ -679,7 +682,7 @@ async function exportDocx() {
     g.items.forEach((t, i) => {
       html += '<h2>' + (i + 1) + '. ' + esc(t.h1) + '</h2>';
       html += '<p><b>Донор:</b> ' + esc(t.donor) + '<br><b>Анкор:</b> ' + esc(t.anchor) + '<br><b>Языки:</b> статья ' + esc(t.langDonor) + ', ссылка ' + esc(t.langLink) +
-        '<br><b>Слов:</b> ' + (t.words || 0) + ' · <b>Статус:</b> ' + esc(STATUS_LABEL[t.status]) + (t.placed ? ' · размещено' : '') + '</p>';
+        '<br><b>Объём:</b> ' + volume(t) + ' · <b>Статус:</b> ' + esc(STATUS_LABEL[t.status]) + (t.placed ? ' · размещено' : '') + '</p>';
       html += t.html.replace(/<(\/?)h2>/g, '<$1h4>').replace(/<(\/?)h1>/g, '<$1h3>');
       html += '<p><b>HTML-код:</b></p>';
       C.prettyHtml(t.html).split('\n').forEach(line => {
@@ -700,7 +703,7 @@ async function exportHtml() {
     body += '<section><h2 class="g">' + esc(g.brand) + ' — ' + esc(g.key) + ' <span>(' + g.items.length + ' шт.)</span></h2>';
     g.items.forEach((t, i) => {
       body += '<div class="a"><div class="h">' + (i + 1) + '. ' + esc(t.h1) + '</div>' +
-        '<p class="m">Донор: <b>' + esc(t.donor) + '</b> · Анкор: <b>' + esc(t.anchor) + '</b> · ' + esc(t.langDonor) + ' → ' + esc(t.langLink) + ' · ' + (t.words || 0) + ' слов · ' + esc(STATUS_LABEL[t.status]) + '</p>' +
+        '<p class="m">Донор: <b>' + esc(t.donor) + '</b> · Анкор: <b>' + esc(t.anchor) + '</b> · ' + esc(t.langDonor) + ' → ' + esc(t.langLink) + ' · ' + volume(t) + ' · ' + esc(STATUS_LABEL[t.status]) + '</p>' +
         '<button onclick="cp(this)">Копировать HTML</button><textarea readonly>' + esc(t.html) + '</textarea>' +
         '<details><summary>Показать статью</summary><div class="art">' + t.html.replace(/<(\/?)h1>/g, '<$1h3>').replace(/<(\/?)h2>/g, '<$1h4>') + '</div></details></div>';
     });
@@ -765,8 +768,8 @@ function renderSettings() {
   $('#sParallel').value = st.parallel;
   $('#sRpm').value = st.rpm;
   $('#sAttempts').value = st.maxAttempts;
-  $('#sMin').value = st.minWords;
-  $('#sMax').value = st.maxWords;
+  $('#sMin').value = st.minChars;
+  $('#sMax').value = st.maxChars;
   $('#sStrict').value = st.strict ? '1' : '0';
   $('#sMode').value = st.mode;
   $('#sTemp').value = st.temperature;
@@ -777,7 +780,7 @@ function renderSettings() {
 
 function bindSettings() {
   const map = { sKey: 'apiKey', sModel: 'model', sFallbacks: 'fallbacks', sParallel: 'parallel', sRpm: 'rpm', sAttempts: 'maxAttempts',
-    sMin: 'minWords', sMax: 'maxWords', sMode: 'mode', sTemp: 'temperature' };
+    sMin: 'minChars', sMax: 'maxChars', sMode: 'mode', sTemp: 'temperature' };
   Object.keys(map).forEach(id => {
     $('#' + id).addEventListener('input', e => {
       let v = e.target.value;

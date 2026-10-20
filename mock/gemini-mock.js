@@ -54,31 +54,38 @@ function readTask(body) {
 }
 
 let articleSeq = 0;
-/** Статья, которая проходит проверку кода (вариант А или Б). bad = без ссылки и бренда. */
+/**
+ * Статья по структуре 1.2.0, которая проходит проверку кода: 7 разделов, бренд по разу в №1, №3–7,
+ * ссылка во 2-м разделе (вариант А — в абзаце, Б — в цитате специалиста). bad = без ссылки и бренда.
+ */
 function makeArticle(t, bad) {
   const n = ++articleSeq;
   let fi = n % FILLER.length;
   const next = () => FILLER[fi++ % FILLER.length];
-  const para = k => { const a = []; for (let i = 0; i < k; i++) a.push(next()); return '<p>' + a.join(' ') + '</p>'; };
+  const sents = k => { const a = []; for (let i = 0; i < k; i++) a.push(next()); return a.join(' '); };
   const link = bad ? t.anchor : '<a href="' + t.acceptor + '">' + t.anchor + '</a>';
   const brand = bad ? 'the platform' : t.brand;
-  const s1 = t.cross
-    ? '<p>' + next() + ' ' + next() + ' Market analyst Jan de Wit from the Netherlands sees it the same way.</p>' +
-      '<blockquote>Die Mathematik hinter jedem Spiel ist bei ' + link + ' und überall sonst gleich.</blockquote>' +
-      '<p>In other words, the mathematics behind every game is the same everywhere. ' + next() + ' ' + next() + '</p>'
-    : para(3).replace(/<\/p>$/, '') + '</p><p>' + next() + ' A practical overview is available at ' + link + ' for comparison. ' + next() + '</p>' + para(2);
+  // абзац из 5 предложений, одно из них — с брендом
+  const withBrand = phrase => '<p>' + sents(2) + ' ' + phrase + ' ' + sents(3) + '</p>';
+  const s2 = t.cross
+    ? '<p>' + sents(4) + '</p><p>„Spelers die hun sessies vooraf plannen, verliezen minder tijd aan impulsieve beslissingen; ook op een entertainmentplatform zoals ' +
+      link + ' zie je dat duidelijke limieten het spel overzichtelijker maken”, aldus de Nederlandse kansspelanalist Jan de Wit.</p><p>' + sents(2) + '</p>'
+    : '<p>' + sents(2) + ' A comparison of session data on the gaming platform ' + link + ' shows the same pattern. ' + sents(3) + '</p>';
   const html = [
     '```html',
     '<h1>Session length and volatility: worked example number ' + n + '</h1>',
-    '<h2>Why the average return misleads</h2>' + s1,
-    '<h2>Reading the bonus terms</h2><p>' + next() + ' At ' + brand + ' casino the terms are shown next to each offer. ' + next() + '</p>' + para(1) +
+    '<h2>Why the average return misleads</h2>' + withBrand('Market analyses mention ' + brand + ' casino as one example of this effect.'),
+    '<h2>What session data shows</h2>' + s2,
+    '<h2>Reading the bonus terms</h2>' + withBrand('Observations around ' + brand + ' point in the same direction.') +
       '<ul><li>Bonus of 200 euros at thirty-five times means 7000 euros in bets.</li><li>Expected loss at 96% return is about 280 euros.</li>' +
       '<li>Games with lower contribution stretch the turnover further.</li><li>Time limits shorten the window for clearing the bonus.</li></ul>',
-    '<h2>Comparing volatility in numbers</h2><p>' + next() + ' The game lobby at ' + brand + ' lists the return for each title. ' + next() + '</p>' + para(1) +
+    '<h2>Comparing volatility in numbers</h2>' + withBrand('Studies of game lobbies such as ' + brand + ' use the same categories.') +
       '<table><tr><th>Volatility</th><th>Typical return</th><th>Spins per 100 euros</th></tr><tr><td>Low</td><td>96%</td><td>about 600</td></tr>' +
       '<tr><td>Medium</td><td>96%</td><td>about 350</td></tr><tr><td>High</td><td>96%</td><td>about 180</td></tr></table>',
-    '<h2>Setting limits before the session</h2><p>' + next() + ' Tools at ' + brand + ' allow deposit limits to be set in the account. ' + next() + '</p>' + para(1) +
+    '<h2>Setting limits before the session</h2>' + withBrand('Loyalty programmes at operators like ' + brand + ' are often analysed in this context.') +
       '<ol><li>Decide the session budget in advance.</li><li>Choose the volatility that fits the budget.</li><li>Stop when the budget is used.</li></ol>',
+    '<h2>Patterns across player groups</h2>' + withBrand('Segment reports that include ' + brand + ' describe similar groups.'),
+    '<h2>Where the analysis goes next</h2>' + withBrand('Future studies involving ' + brand + ' are expected to refine these figures.'),
     '```',
   ].join('\n');
   return html;
