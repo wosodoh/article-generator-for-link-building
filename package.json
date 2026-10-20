@@ -1,0 +1,12 @@
+{
+  "name": "article-generator",
+  "productName": "Генератор статей",
+  "version": "1.1.8",
+  "description": "Генерация iGaming-статей со ссылками через Gemini с автопроверкой ТЗ",
+  "main": "main.js",
+  "author": "Maksym",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "html-to-docx": "^1.8.0"
+  }
+}

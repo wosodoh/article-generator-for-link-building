@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+<title>Генератор статей</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <nav class="side">
+    <div class="logo">Генератор<br><span>статей</span></div>
+    <button class="nav active" data-view="tasks">Задачи <b id="navTasks"></b></button>
+    <button class="nav" data-view="articles">Статьи <b id="navArticles"></b></button>
+    <button class="nav" data-view="projects">Проекты <b id="navProjects"></b></button>
+    <button class="nav" data-view="settings">Настройки</button>
+    <div class="side-foot" id="modelInfo"></div>
+  </nav>
+
+  <main>
+    <!-- Полоса прогресса -->
+    <div class="runbar" id="runbar" hidden>
+      <div class="runbar-text" id="runText">…</div>
+      <div class="bar"><div id="runFill"></div></div>
+      <button class="btn small ghost" id="btnStop">Остановить</button>
+    </div>
+
+    <!-- ЗАДАЧИ -->
+    <section class="view" id="view-tasks">
+      <header class="vhead">
+        <h1>Задачи</h1>
+        <div class="actions">
+          <button class="btn" id="btnPasteToggle">+ Вставить из Excel</button>
+          <button class="btn primary" id="btnGenerate">Сгенерировать</button>
+        </div>
+      </header>
+
+      <div class="paste" id="pasteBox" hidden>
+        <div class="paste-hint">
+          <b>Скопируйте строки в Excel</b> (целиком A…K, как в «Плане работы») и нажмите сюда <kbd>Ctrl</kbd>+<kbd>V</kbd>.
+          Подойдут и три колонки: Донор · Анкор · Проект. Заголовки не обязательны.
+        </div>
+        <div class="paste-area" id="pasteArea" tabindex="0">Нажмите сюда и вставьте (Ctrl+V)</div>
+        <div class="paste-msg" id="pasteMsg"></div>
+      </div>
+
+      <div class="toolbar">
+        <div class="chips" id="taskFilters"></div>
+        <div class="sel-actions">
+          <span id="selInfo"></span>
+          <button class="btn small" id="btnRegenSel" disabled>Перегенерировать</button>
+          <button class="btn small danger" id="btnDelSel" disabled>Удалить</button>
+        </div>
+      </div>
+
+      <div class="tablewrap">
+        <table class="grid" id="taskTable">
+          <thead><tr>
+            <th class="c-chk"><input type="checkbox" id="chkAll"></th>
+            <th>Донор</th><th>Проект</th><th>Анкор</th>
+            <th class="c-lang">Язык донора</th><th class="c-lang">Язык ссылки</th><th class="c-brand">Бренд</th>
+            <th class="c-status">Статус</th><th class="c-act"></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty" id="taskEmpty">Задач пока нет. Нажмите «+ Вставить из Excel».</div>
+      </div>
+    </section>
+
+    <!-- СТАТЬИ -->
+    <section class="view" id="view-articles" hidden>
+      <header class="vhead">
+        <h1>Статьи</h1>
+        <div class="actions">
+          <label class="check"><input type="checkbox" id="hidePlaced"> Скрыть размещённые</label>
+          <button class="btn" id="btnExportHtml">Скачать HTML</button>
+          <button class="btn primary" id="btnExportDocx">Скачать Word</button>
+        </div>
+      </header>
+      <div class="stats" id="stats"></div>
+      <div id="articleGroups"></div>
+      <div class="empty" id="articleEmpty">Готовых статей пока нет.</div>
+    </section>
+
+    <!-- ПРОЕКТЫ -->
+    <section class="view" id="view-projects" hidden>
+      <header class="vhead"><h1>Проекты</h1></header>
+      <p class="muted">Бренд и язык ссылки для каждого проекта. Заполняются автоматически при первой встрече проекта — исправьте один раз, и дальше будет использоваться ваше значение.</p>
+      <div class="tablewrap">
+        <table class="grid" id="projTable">
+          <thead><tr><th>Проект (домен)</th><th class="c-brand">Бренд</th><th class="c-lang">Язык ссылки</th><th>Задач</th><th class="c-act"></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty" id="projEmpty">Проекты появятся после добавления задач.</div>
+      </div>
+    </section>
+
+    <!-- НАСТРОЙКИ -->
+    <section class="view" id="view-settings" hidden>
+      <header class="vhead"><h1>Настройки</h1></header>
+      <div class="form">
+        <div class="card">
+          <h2>Gemini</h2>
+          <label>API-ключ <span class="muted">— бесплатно: aistudio.google.com → Get API key</span>
+            <div class="row"><input type="password" id="sKey" placeholder="AIza…"><button class="btn small" id="btnShowKey">Показать</button><button class="btn small" id="btnCheckKey">Проверить</button></div>
+          </label>
+          <div class="msg" id="keyMsg"></div>
+          <label>Модель <input id="sModel"></label>
+          <label>Резервные модели <span class="muted">— когда у основной кончается дневной лимит, программа переходит на следующую</span>
+            <input id="sFallbacks"></label>
+        </div>
+        <div class="card">
+          <h2>Генерация</h2>
+          <div class="grid2">
+            <label>Статей одновременно <input type="number" id="sParallel" min="1" max="8"></label>
+            <label>Запросов в минуту <span class="muted">— бесплатный тариф: 5</span> <input type="number" id="sRpm" min="1" max="60"></label>
+            <label>Макс. запросов на статью <input type="number" id="sAttempts" min="1" max="4"></label>
+            <label>Слов минимум <input type="number" id="sMin"></label>
+            <label>Слов максимум <input type="number" id="sMax"></label>
+            <label>Проверка
+              <select id="sStrict"><option value="0">Экономная — переписываем только при серьёзных ошибках</option><option value="1">Строгая — переписываем при любой ошибке</option></select></label>
+            <label>Режим темы
+              <select id="sMode"><option value="igaming">iGaming — чистая статья про казино/ставки</option><option value="bridge">Стык с донором — тема на стыке ниши донора и игр</option></select></label>
+            <label>Температура <input type="number" id="sTemp" step="0.1" min="0" max="2"></label>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Примеры удачных тем</h2>
+          <p class="muted">По одной в строке. Модель пишет в похожем стиле и с такой же конкретикой.</p>
+          <textarea id="sTopics" rows="8"></textarea>
+        </div>
+        <div class="card">
+          <h2>Запрещённые фразы</h2>
+          <p class="muted">По одной в строке. Проверяются автоматически — добавляйте по фидбеку.</p>
+          <textarea id="sStop" rows="8"></textarea>
+        </div>
+        <p class="muted small" id="dataPath"></p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Предпросмотр -->
+<div class="modal" id="modal" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <div id="modalTitle"></div>
+      <div class="actions">
+        <button class="btn small" id="modalCopy">Копировать HTML</button>
+        <button class="btn small ghost" id="modalClose">Закрыть</button>
+      </div>
+    </div>
+    <div class="modal-meta" id="modalMeta"></div>
+    <div class="modal-body article" id="modalBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
