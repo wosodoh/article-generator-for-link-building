@@ -442,6 +442,28 @@ const LIMITS_PLUS = Object.assign({}, FREE_LIMITS, { 'gemini-3.9-flash': { rpm: 
     check(/Цитату не переводи/.test(sys), 'нет правила «без перевода»');
   });
 
+  await test('Признаки ИИ: маркеры, тире, одинаковые предложения — только мелочи; эталоны команды чистые', async check => {
+    const C = require('../src/core');
+    const fx = f => fs.readFileSync(path.join(__dirname, 'fixtures', f), 'utf8');
+    ['team-de-cross-nl-1.html', 'team-de-cross-nl-2.html', 'team-en-cross-nl-3.html'].forEach(f => {
+      const sig = C.aiSignals(fx(f), f.indexOf('-en-') >= 0 ? 'en' : 'de');
+      check(!sig.some(e => /одинаковой длины/.test(e)), f + ': ' + sig.join(' | '));
+    });
+    check(C.aiSignals(fx('good-nl.html'), 'nl').some(e => /одинаковой длины/.test(e)), 'ровные предложения Gemini не замечены');
+    const art = '<p>Moreover, the market is a tapestry — of bets — and odds — and risk. Overall it is fine.</p>';
+    const sig = C.aiSignals(art, 'en');
+    check(sig.some(e => /«tapestry»/.test(e) && /«moreover»/.test(e)), 'маркеры не найдены: ' + sig.join(' | '));
+    check(sig.some(e => /Тире «—» 3 раз/.test(e)), 'тире не посчитаны: ' + sig.join(' | '));
+    check(!C.aiSignals('<p>Furthermoreish text.</p>', 'en').length, 'маркер найден внутри слова');
+    const app = await loadApp({ data: data({}, 1) });
+    await generate(app);
+    const sys = app.mock.log[0].body.systemInstruction.parts[0].text;
+    const user = app.mock.log[0].body.contents[0].parts[0].text;
+    check(/ЧЕЛОВЕЧНОСТЬ/.test(sys), 'в промпте нет правил против детекторов ИИ');
+    check(/Маркеры ИИ на языке статьи — не используй: «tapestry»/.test(user), 'в задании нет маркеров ИИ для en');
+    check(tasksOf(app)[0].status === 'ok' && app.mock.log.length === 1, 'мелочи по ИИ потратили запрос: ' + app.mock.log.length);
+  });
+
   print('\n' + (failed ? 'Не прошло: ' + failed : 'Все проверки прошли'));
   fs.writeFileSync(path.join(__dirname, 'last-run.txt'), out.join('\n') + '\n');
   process.exitCode = failed ? 1 : 0;

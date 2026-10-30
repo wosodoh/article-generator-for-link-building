@@ -36,6 +36,22 @@ const DEFAULT_STOP = [
   'en el mundo actual', 'no es ningún secreto',
 ];
 
+// Встроенные «маркеры ИИ» по языку статьи: на них цепляются детекторы. Не зависят от списка в настройках
+const AI_MARKERS = {
+  en: ['tapestry', 'testament to', 'navigate the', 'navigating the', 'plays a crucial role', 'plays a pivotal role',
+    'it is important to note', 'it is worth noting', 'furthermore', 'moreover', 'in summary', 'seamless', 'holistic',
+    'multifaceted', 'paramount', 'not only', 'when it comes to', 'a myriad of', 'unlock the', 'elevate'],
+  de: ['darüber hinaus', 'zusammenfassend', 'es ist wichtig zu beachten', 'spielt eine entscheidende rolle',
+    'nicht nur', 'in der welt der', 'facettenreich', 'ganzheitlich', 'nahtlos', 'eine vielzahl von'],
+  nl: ['bovendien', 'kortom', 'het is belangrijk om', 'speelt een cruciale rol', 'niet alleen', 'in de wereld van',
+    'naadloos', 'veelzijdig', 'een scala aan'],
+  fr: ['en outre', 'en résumé', 'il est important de noter', 'joue un rôle crucial', 'non seulement', 'une myriade de'],
+  es: ['en resumen', 'es importante destacar', 'juega un papel crucial', 'no solo', 'una miríada de'],
+  it: ['in sintesi', 'è importante notare', 'svolge un ruolo cruciale', 'non solo', 'una miriade di'],
+  pl: ['podsumowując', 'warto zauważyć', 'odgrywa kluczową rolę', 'nie tylko'],
+  pt: ['em resumo', 'é importante notar', 'desempenha um papel crucial', 'não apenas'],
+};
+
 // ───────────────────────────── ЯЗЫКИ ─────────────────────────────
 
 const LANGS = {
@@ -411,6 +427,29 @@ function splitSections(h) {
 }
 
 /**
+ * Признаки ИИ-текста, на которые смотрят детекторы. Только мелочи: запрос не тратят.
+ * Порог разброса 0.3 подобран по эталонам команды (0.33–0.47) и статьям Gemini (0.18–0.22).
+ */
+function aiSignals(h, lang) {
+  const out = [];
+  const text = stripTags(h);
+  const low = text.toLowerCase();
+  const found = (AI_MARKERS[lang] || []).filter(p =>
+    new RegExp('(?<![\\p{L}])' + escapeRe(p) + '(?![\\p{L}])', 'u').test(low));
+  if (found.length) out.push('Маркеры ИИ-текста, замени своими словами: ' + found.slice(0, 6).map(f => '«' + f + '»').join(', '));
+  const dashes = (text.match(/—/g) || []).length;
+  if (dashes > 2) out.push('Тире «—» ' + dashes + ' раз — частый признак ИИ, замени запятыми, точками или скобками (не больше 2 на статью)');
+  const paras = (h.match(/<p\b[^>]*>[\s\S]*?<\/p>/gi) || []).map(stripTags).join(' ');
+  const lens = paras.split(/(?<=[.!?…])\s+(?=[\p{Lu}„"«“])/u).map(countWords).filter(n => n >= 3);
+  if (lens.length >= 20) {
+    const mean = lens.reduce((a, b) => a + b, 0) / lens.length;
+    const cv = Math.sqrt(lens.reduce((a, b) => a + (b - mean) * (b - mean), 0) / lens.length) / mean;
+    if (cv < 0.3) out.push('Предложения почти одинаковой длины (разброс ' + cv.toFixed(2) + ') — детекторы ИИ это ловят; чередуй предложения на 10–12 и на 30+ слов');
+  }
+  return out;
+}
+
+/**
  * Проверка статьи. ctx: {acceptor, anchor, brand, cross, lang, minChars, maxChars, stop[], usedH1[]}
  * Возвращает {errors[] — критичные (нарушают ТЗ по ссылке/бренду/языку), soft[] — мелочи, h1, words, chars}
  */
@@ -509,6 +548,8 @@ function validateArticle(h, ctx) {
   const found = (ctx.stop || []).filter(p => p && low.indexOf(String(p).toLowerCase()) >= 0);
   if (found.length) S('Убери запрещённые фразы: ' + found.map(f => '«' + f + '»').join(', '));
 
+  aiSignals(h, ctx.lang).forEach(S);
+
   // Язык проверяем без цитаты: она на языке ссылки
   let langBody = h.replace(/<blockquote[\s\S]*?<\/blockquote>/gi, ' ');
   if (ctx.cross && linkPara) langBody = langBody.replace(linkPara, ' ');
@@ -563,6 +604,7 @@ function systemPrompt() {
     'ФАКТЫ И ЦИФРЫ: умеренно, по делу; типичные значения и диапазоны (например, RTP большинства видеослотов 94–97%), механики, математика вероятностей. ЗАПРЕЩЕНО выдумывать названия конкретных исследований, организаций, изданий, авторов (кроме специалиста в цитате варианта Б) и даты.',
     '',
     'СТИЛЬ: естественный человеческий текст, аналитическая подача, высокая информационная плотность, минимум воды, чёткие формулировки, логичные выводы. Без общих фраз, повторов, пустых предложений и шаблонных AI-формулировок.',
+    'ЧЕЛОВЕЧНОСТЬ (текст проверяют детекторами ИИ): предложения длинные, но заметно разной длины и строения — рядом с предложением на 30+ слов ставь предложение на 10–12; соседние предложения не начинай одинаково. Тире «—» не больше 2 на всю статью. Без конструкций «не только…, но и…», «это не просто X, а Y», без троек однородных прилагательных, без вводных «более того», «кроме того», «в итоге» в начале абзацев и без раздела, который заканчивается обобщающим выводом. Вместо общих оценок — конкретное наблюдение, пример или цифра.',
     'Запрещённые фразы (и их аналоги на любом языке): {STOP}; а также «на сегодняшний день», «цифровая площадка», «цифровая платформа» и похожие конструкции со словом «цифровой».',
     '',
     'КОД: ровно один тег <a> на всю статью, других ссылок нет. Без <blockquote>. Без <html>, <head>, <body>, стилей, классов и любых атрибутов (кроме href). Без Markdown.',
@@ -604,6 +646,7 @@ function userPrompt(t) {
     lines.push('Тема: придумай сам. Направление: ' + t.direction + '. Тема должна быть узкой и конкретной. Тематику сайта-донора игнорируй.');
     if (t.examples.length) lines.push('Примеры удачных тем (ориентир по стилю и конкретике, не копировать):\n- ' + t.examples.join('\n- '));
   }
+  if (AI_MARKERS[t.langDonor]) lines.push('Маркеры ИИ на языке статьи — не используй: ' + AI_MARKERS[t.langDonor].map(x => '«' + x + '»').join(', '));
   if (t.usedH1.length) lines.push('Уже использованные заголовки — НЕ повторяй и не делай похожих:\n- ' + t.usedH1.join('\n- '));
   return lines.join('\n');
 }
@@ -757,7 +800,7 @@ function geminiRequestBody(system, contents, s) {
 const Core = {
   DIRECTIONS, DEFAULT_TOPICS, DEFAULT_STOP, LANGS, LANG_RU, normalizeLang, langName, areSimilarLangs, detectLangFromText,
   hostOf, mainDomainLabel, brandFromUrl, brandGuess, acceptorCountry, expertInitials, langFromUrl, htmlLangAttr, guessLangFromHtml, siteTopic, decodeEntities,
-  sanitizeHtml, autoFix, fixMixedScript, mixedScriptWords, validateArticle, countWords, countBrand, hasBrandCasino, stripTags, escapeHtml, escapeAttr, prettyHtml,
+  AI_MARKERS, aiSignals, sanitizeHtml, autoFix, fixMixedScript, mixedScriptWords, validateArticle, countWords, countBrand, hasBrandCasino, stripTags, escapeHtml, escapeAttr, prettyHtml,
   systemPrompt, userPrompt, geminiParse, parseQuota, geminiRequestBody, parseRows, normUrl, projectKey, looksLikeUrl,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = Core;
